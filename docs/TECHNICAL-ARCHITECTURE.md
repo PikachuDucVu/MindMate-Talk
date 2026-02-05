@@ -281,6 +281,244 @@ mindmate-talk/
 'crisis:detected'      // Crisis protocol triggered
 ```
 
+### 4.2.1 WebSocket Resilience & Error Handling
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    WEBSOCKET RESILIENCE ARCHITECTURE                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Vấn đề cần xử lý:
+├── Network jitter (mạng không ổn định)
+├── Connection drops (rớt kết nối)
+├── Packet loss (mất gói tin audio)
+├── High latency (độ trễ cao)
+└── Server unavailable (server không phản hồi)
+```
+
+```typescript
+// WebSocket Connection Configuration
+
+const SOCKET_CONFIG = {
+  // Reconnection Strategy
+  reconnection: true,
+  reconnectionAttempts: 5,
+  reconnectionDelay: 1000,        // Start with 1s
+  reconnectionDelayMax: 5000,     // Max 5s between attempts
+  randomizationFactor: 0.5,       // Add jitter to prevent thundering herd
+
+  // Timeout Settings
+  timeout: 20000,                 // Connection timeout
+  pingTimeout: 10000,             // Ping timeout
+  pingInterval: 25000,            // Ping interval
+
+  // Transport Priority
+  transports: ['websocket', 'polling'],  // Fallback to polling if WS fails
+
+  // Buffer Settings
+  upgradeTimeout: 10000,
+};
+
+// Reconnection Events
+socket.on('reconnect_attempt', (attemptNumber) => {
+  console.log(`Reconnecting... attempt ${attemptNumber}`);
+  showToast('Đang kết nối lại...');
+});
+
+socket.on('reconnect_failed', () => {
+  showError('Không thể kết nối. Vui lòng kiểm tra mạng.');
+});
+
+socket.on('reconnect', () => {
+  hideToast();
+  // Resume any interrupted operations
+});
+```
+
+### 4.2.2 Audio Streaming Buffer Strategy
+
+```typescript
+// Audio Buffer for Network Jitter
+
+interface AudioBufferConfig {
+  // Minimum buffer before starting playback
+  minBufferMs: 500,
+
+  // Maximum buffer size (drop old chunks if exceeded)
+  maxBufferMs: 3000,
+
+  // Adaptive bitrate thresholds
+  bitrateThresholds: {
+    excellent: { latency: 100, bitrate: 128000 },   // 128kbps
+    good: { latency: 300, bitrate: 64000 },         // 64kbps
+    poor: { latency: 500, bitrate: 32000 },         // 32kbps
+  }
+}
+
+// Jitter Buffer Implementation
+class JitterBuffer {
+  private buffer: AudioChunk[] = [];
+  private isPlaying: boolean = false;
+
+  addChunk(chunk: AudioChunk) {
+    // Add to buffer with sequence number
+    this.buffer.push(chunk);
+    this.buffer.sort((a, b) => a.sequence - b.sequence);
+
+    // Start playback when buffer is sufficient
+    if (!this.isPlaying && this.getBufferDuration() >= MIN_BUFFER_MS) {
+      this.startPlayback();
+    }
+  }
+
+  handlePacketLoss(missingSequence: number) {
+    // Request retransmission or skip
+    if (this.canRequestRetransmit()) {
+      socket.emit('voice:request-retransmit', { sequence: missingSequence });
+    } else {
+      // Skip the missing packet, interpolate if possible
+      this.interpolateAudio(missingSequence);
+    }
+  }
+}
+```
+
+### 4.2.3 Connection State Management
+
+```typescript
+// Connection State Machine
+
+enum ConnectionState {
+  DISCONNECTED = 'disconnected',
+  CONNECTING = 'connecting',
+  CONNECTED = 'connected',
+  RECONNECTING = 'reconnecting',
+  ERROR = 'error',
+}
+
+interface ConnectionManager {
+  state: ConnectionState;
+  lastPingTime: number;
+  reconnectAttempts: number;
+
+  // Actions
+  connect(): void;
+  disconnect(): void;
+  handleDisconnect(reason: string): void;
+  handleReconnect(): void;
+
+  // Quality Monitoring
+  measureLatency(): number;
+  getConnectionQuality(): 'excellent' | 'good' | 'poor' | 'critical';
+}
+
+// Connection Quality Indicator (show to user)
+const ConnectionIndicator: React.FC<{ quality: string }> = ({ quality }) => {
+  const colors = {
+    excellent: 'green',
+    good: 'yellow',
+    poor: 'orange',
+    critical: 'red',
+  };
+
+  return (
+    <div className={`connection-dot bg-${colors[quality]}`} />
+  );
+};
+```
+
+### 4.2.4 Graceful Degradation
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       GRACEFUL DEGRADATION STRATEGY                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Khi mạng kém, hệ thống sẽ tự động:
+
+1. VOICE → TEXT FALLBACK
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  Nếu voice streaming thất bại liên tục (>3 lần):                    │
+   │  → Hiển thị popup: "Mạng không ổn định. Chuyển sang chat text?"     │
+   │  → User có thể chọn tiếp tục voice hoặc chuyển text                 │
+   └──────────────────────────────────────────────────────────────────────┘
+
+2. AUDIO QUALITY ADAPTATION
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  Latency > 500ms → Giảm bitrate audio                               │
+   │  Latency > 1000ms → Chuyển sang audio-only (không waveform)         │
+   │  Latency > 2000ms → Suggest chuyển sang text                        │
+   └──────────────────────────────────────────────────────────────────────┘
+
+3. OFFLINE QUEUE
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  Nếu mất kết nối khi đang gửi message:                              │
+   │  → Lưu message vào local queue                                      │
+   │  → Khi có mạng lại → Gửi các message trong queue                    │
+   │  → Hiển thị trạng thái "Đang chờ gửi..."                           │
+   └──────────────────────────────────────────────────────────────────────┘
+
+4. CACHED RESPONSES
+   ┌──────────────────────────────────────────────────────────────────────┐
+   │  Một số response phổ biến có thể cache:                             │
+   │  → Greeting messages                                                 │
+   │  → Error messages                                                    │
+   │  → Hotline information                                               │
+   └──────────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2.5 Error Recovery Flows
+
+```typescript
+// Error Types and Recovery Actions
+
+const ERROR_RECOVERY: Record<string, RecoveryAction> = {
+  // Network Errors
+  'NETWORK_TIMEOUT': {
+    message: 'Kết nối chậm. Mình sẽ thử lại nhé.',
+    action: 'RETRY',
+    maxRetries: 3,
+  },
+
+  'CONNECTION_LOST': {
+    message: 'Mất kết nối. Đang kết nối lại...',
+    action: 'RECONNECT',
+    showIndicator: true,
+  },
+
+  // Audio Errors
+  'AUDIO_CAPTURE_FAILED': {
+    message: 'Không thể thu âm. Bạn thử chat text nhé?',
+    action: 'FALLBACK_TO_TEXT',
+  },
+
+  'AUDIO_PLAYBACK_FAILED': {
+    message: 'Không thể phát âm thanh. Hiển thị text thay thế.',
+    action: 'SHOW_TEXT_RESPONSE',
+  },
+
+  // Server Errors
+  'SERVER_ERROR': {
+    message: 'Mình gặp trục trặc. Bạn thử lại sau giây lát nhé.',
+    action: 'RETRY_WITH_DELAY',
+    delayMs: 2000,
+  },
+
+  'RATE_LIMITED': {
+    message: 'Bạn nói nhanh quá. Đợi chút nhé!',
+    action: 'WAIT',
+    waitMs: 5000,
+  },
+
+  // AI Errors
+  'AI_RESPONSE_TIMEOUT': {
+    message: 'Mình đang nghĩ hơi lâu. Đợi mình chút...',
+    action: 'EXTEND_TIMEOUT',
+    extendMs: 10000,
+  },
+};
+```
+
 ### 4.3 Authentication Flow
 
 ```
@@ -451,22 +689,124 @@ const rateLimits = {
 │                    VOICE CHAT LATENCY TARGETS                                │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-Total target: < 2000ms (from user stops speaking to AI starts speaking)
+Realistic target: 3000-3500ms (from user stops speaking to AI starts speaking)
+Optimal target:   < 2500ms (with full optimization)
 
-Breakdown:
-├── Audio upload + STT:     ~500ms  (stream processing)
-├── Gemini API:             ~800ms  (use streaming response)
-├── TTS generation:         ~500ms  (stream first chunk)
-└── Network overhead:       ~200ms
+Breakdown (Realistic):
+├── Audio upload + STT:     ~800ms   (Whisper API, Vietnamese)
+├── Gemini API:             ~1000ms  (streaming response)
+├── TTS generation:         ~1000ms  (ElevenLabs streaming)
+└── Network overhead:       ~200-400ms
                            ─────────
-                Total:     ~2000ms
+                Total:     ~3000-3500ms
 
-Optimizations:
-1. WebSocket streaming (not HTTP polling)
-2. Audio chunking (process while still speaking)
-3. Gemini streaming response
-4. ElevenLabs streaming TTS (play while generating)
-5. Edge caching for static assets
+Breakdown (Optimized):
+├── Audio upload + STT:     ~500ms   (stream while speaking)
+├── Gemini API:             ~700ms   (start TTS before complete)
+├── TTS generation:         ~500ms   (first chunk only)
+└── Network overhead:       ~200ms   (edge locations)
+                           ─────────
+                Total:     ~1900-2000ms (best case)
+```
+
+### 6.1.1 Optimization Techniques
+
+```typescript
+// 1. STREAM AUDIO WHILE SPEAKING
+// Gửi audio chunks trong khi user còn đang nói
+// Không đợi user nói xong mới gửi
+
+const streamAudioChunks = (mediaRecorder: MediaRecorder) => {
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data.size > 0) {
+      socket.emit('voice:chunk', {
+        chunk: event.data,
+        timestamp: Date.now(),
+      });
+    }
+  };
+
+  // Gửi mỗi 250ms thay vì đợi hết
+  mediaRecorder.start(250);
+};
+
+// 2. GEMINI STREAMING + TTS OVERLAP
+// Bắt đầu TTS ngay khi có câu đầu tiên từ Gemini
+// Không đợi toàn bộ response
+
+const streamGeminiToTTS = async (geminiStream: AsyncIterator) => {
+  let buffer = '';
+  const sentenceEnd = /[.!?。！？]/;
+
+  for await (const chunk of geminiStream) {
+    buffer += chunk.text;
+
+    // Khi có câu hoàn chỉnh, gửi cho TTS ngay
+    if (sentenceEnd.test(buffer)) {
+      const sentences = buffer.split(sentenceEnd);
+      for (const sentence of sentences.slice(0, -1)) {
+        await sendToTTS(sentence);
+      }
+      buffer = sentences[sentences.length - 1];
+    }
+  }
+};
+
+// 3. TTS CHUNKED STREAMING
+// ElevenLabs hỗ trợ streaming - phát audio ngay khi có chunk đầu
+// Không đợi toàn bộ audio generate xong
+
+const streamTTSToClient = async (text: string, socket: Socket) => {
+  const audioStream = await elevenlabs.textToSpeechStream({
+    text,
+    voiceId: VOICE_ID,
+    modelId: 'eleven_multilingual_v2',
+  });
+
+  socket.emit('ai:response:start');
+
+  let sequence = 0;
+  for await (const chunk of audioStream) {
+    socket.emit('ai:response:chunk', {
+      chunk,
+      sequence: sequence++,
+    });
+  }
+
+  socket.emit('ai:response:end');
+};
+```
+
+### 6.1.2 Latency Monitoring
+
+```typescript
+// Track and report latency metrics
+
+interface LatencyMetrics {
+  sttLatency: number;      // Audio upload → Text received
+  llmLatency: number;      // Text sent → First token received
+  ttsLatency: number;      // Text sent → First audio chunk
+  totalLatency: number;    // User stops speaking → AI starts speaking
+  networkLatency: number;  // RTT measurement
+}
+
+// Log percentiles for monitoring
+const LATENCY_THRESHOLDS = {
+  p50: 3000,   // 50% of requests should be under 3s
+  p75: 3500,   // 75% under 3.5s
+  p95: 4500,   // 95% under 4.5s
+  p99: 6000,   // 99% under 6s
+};
+
+// Alert if latency exceeds thresholds
+const alertOnHighLatency = (metrics: LatencyMetrics) => {
+  if (metrics.totalLatency > LATENCY_THRESHOLDS.p95) {
+    logger.warn('High latency detected', {
+      totalLatency: metrics.totalLatency,
+      breakdown: metrics,
+    });
+  }
+};
 ```
 
 ### 6.2 Caching Strategy

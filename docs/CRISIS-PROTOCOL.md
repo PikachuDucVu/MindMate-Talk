@@ -337,6 +337,34 @@ const HOTLINES = {
     hours: '24/7',
     cost: 'Miễn phí',
     description: 'Cấp cứu y tế'
+  },
+
+  // NGO & Tổ chức hỗ trợ
+  blueDragon: {
+    name: 'Blue Dragon Children\'s Foundation',
+    number: '1800-599-199',
+    hours: '24/7',
+    cost: 'Miễn phí',
+    description: 'Hỗ trợ trẻ em đường phố, nạn nhân buôn người',
+    website: 'https://bluedragon.org'
+  },
+
+  hagar: {
+    name: 'Hagar International Vietnam',
+    number: '024-3715-5012',
+    hours: 'Giờ hành chính',
+    cost: 'Miễn phí',
+    description: 'Hỗ trợ phụ nữ và trẻ em bị bạo lực, xâm hại',
+    website: 'https://hagarinternational.org'
+  },
+
+  saigonChildren: {
+    name: 'Saigon Children\'s Charity',
+    number: '028-3824-2706',
+    hours: 'Giờ hành chính',
+    cost: 'Miễn phí',
+    description: 'Hỗ trợ giáo dục và tâm lý cho trẻ em',
+    website: 'https://saigonchildren.com'
   }
 };
 ```
@@ -689,5 +717,131 @@ interface CrisisReviewData {
 │  Tổng đài Bảo vệ Trẻ em          │  111           │  24/7  │  Miễn phí   │
 ├────────────────────────────────────────────────────────────────────────────┤
 │  Cấp cứu                         │  115           │  24/7  │  Miễn phí   │
+├────────────────────────────────────────────────────────────────────────────┤
+│  Blue Dragon Foundation          │  1800-599-199  │  24/7  │  Miễn phí   │
 └────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 11. SOS Button Integration
+
+### 11.1 Overview
+
+Nút SOS là tính năng bổ sung quan trọng, cho phép user chủ động tìm kiếm hỗ trợ
+mà không cần đợi AI phát hiện từ khóa khủng hoảng.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         SOS BUTTON FLOW                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────┐
+    │  User taps SOS   │
+    │  button in chat  │
+    └────────┬─────────┘
+             │
+             ▼
+    ┌──────────────────┐
+    │  Show Bottom     │
+    │  Sheet with      │
+    │  hotline options │
+    └────────┬─────────┘
+             │
+      ┌──────┴──────┐
+      │             │
+      ▼             ▼
+┌──────────┐  ┌──────────┐
+│ User taps│  │ User taps│
+│ "Gọi"    │  │ "Quay    │
+│          │  │  lại"    │
+└────┬─────┘  └────┬─────┘
+     │             │
+     ▼             ▼
+┌──────────┐  ┌──────────┐
+│ Open     │  │ Close    │
+│ phone    │  │ sheet,   │
+│ dialer   │  │ continue │
+│          │  │ chat     │
+└──────────┘  └──────────┘
+```
+
+### 11.2 Privacy Considerations
+
+```typescript
+// SOS Button KHÔNG được log các thông tin sau:
+const SOS_PRIVACY_RULES = {
+  // KHÔNG log việc user tap SOS button
+  logSosTap: false,
+
+  // KHÔNG log việc user xem hotline list
+  logHotlineView: false,
+
+  // KHÔNG log việc user gọi hotline
+  logHotlineCall: false,
+
+  // CHỈ log nếu user đồng ý feedback (optional)
+  logWithConsent: true,
+
+  // Lý do: Bảo vệ quyền riêng tư tuyệt đối của user
+  // User có thể đang trong trạng thái nhạy cảm
+  // và không muốn bất kỳ ai biết họ đã tìm kiếm hỗ trợ
+};
+```
+
+### 11.3 SOS Button vs Crisis Detection
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                  SOS BUTTON vs CRISIS DETECTION                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────┬───────────────────────────────────────────────┐
+│       SOS BUTTON            │          CRISIS DETECTION                     │
+├─────────────────────────────┼───────────────────────────────────────────────┤
+│ User-initiated              │ AI-initiated                                  │
+│ (User chủ động)             │ (AI phát hiện)                                │
+├─────────────────────────────┼───────────────────────────────────────────────┤
+│ Ngay lập tức                │ Sau khi phân tích tin nhắn                    │
+├─────────────────────────────┼───────────────────────────────────────────────┤
+│ Không log                   │ Log để cải thiện hệ thống                     │
+├─────────────────────────────┼───────────────────────────────────────────────┤
+│ Hiển thị danh sách hotline  │ AI đưa hotline vào context phản hồi          │
+├─────────────────────────────┼───────────────────────────────────────────────┤
+│ Không làm gián đoạn chat    │ Có thể thay đổi tone của AI                   │
+└─────────────────────────────┴───────────────────────────────────────────────┘
+
+Cả hai cơ chế BỔ SUNG cho nhau, không thay thế:
+- SOS Button: Cho user đang biết mình cần giúp đỡ
+- Crisis Detection: Cho user chưa nhận ra mình cần giúp đỡ
+```
+
+### 11.4 Implementation Notes
+
+```typescript
+// components/SosButton.tsx
+
+interface SosButtonProps {
+  onPress: () => void;
+}
+
+const SosButton: React.FC<SosButtonProps> = ({ onPress }) => {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      accessibilityLabel="Hỗ trợ khẩn cấp"
+      accessibilityHint="Mở danh sách đường dây nóng hỗ trợ tâm lý"
+      style={styles.sosButton}
+    >
+      {/* Icon: Lifebuoy hoặc SOS */}
+      <LifebuoyIcon color="#0D9488" size={24} />
+    </TouchableOpacity>
+  );
+};
+
+// Styling Guidelines:
+// - Màu: Teal (#0D9488) - nhẹ nhàng, không gây hoảng
+// - Vị trí: Header bên phải, trước nút menu
+// - Size: 24-28px icon
+// - Padding: 8px để dễ tap
 ```

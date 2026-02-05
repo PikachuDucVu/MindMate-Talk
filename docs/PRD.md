@@ -116,10 +116,27 @@ Một người bạn AI **luôn sẵn sàng 24/7**, giao tiếp bằng **giọng
 ```
 
 **Requirements:**
-- Latency < 2 giây từ lúc user nói xong đến AI phản hồi
+- Latency 3-4 giây từ lúc user nói xong đến AI phản hồi (target thực tế)
+- Optimal target: < 2.5 giây (với streaming optimization)
 - Hỗ trợ tiếng Việt (primary), tiếng Anh (secondary)
 - Giọng AI: Trẻ trung, tự nhiên, ấm áp
 - Có thể chuyển sang text mode bất cứ lúc nào
+
+**Latency Breakdown (Realistic):**
+```
+Audio upload + STT:     ~800ms  (Whisper API)
+LLM Processing:         ~1000ms (Gemini với streaming)
+TTS Generation:         ~1000ms (ElevenLabs streaming)
+Network overhead:       ~200-400ms
+                        ─────────
+Total:                  ~3000-3500ms
+```
+
+**Optimization Strategies:**
+- Stream audio chunks while user still speaking
+- Use Gemini streaming response
+- Start TTS while LLM still generating
+- Edge caching for static assets
 
 #### 4.2.2 Mood Check-in (P1)
 **UI: Emotion Chips**
@@ -188,7 +205,8 @@ Xem chi tiết tại [CRISIS-PROTOCOL.md](./CRISIS-PROTOCOL.md)
 ### 6.2 Quality Metrics
 | Metric | Target |
 |--------|--------|
-| Voice latency (p95) | < 2s |
+| Voice latency (p50) | < 3s |
+| Voice latency (p95) | < 4s |
 | App crash rate | < 0.5% |
 | User satisfaction (in-app rating) | > 4.0/5 |
 
@@ -234,6 +252,59 @@ khẩn cấp, hãy liên hệ hotline: 1800-599-920 (miễn phí, 24/7)
 - User có quyền: Xem, xuất, xóa dữ liệu
 - Không chia sẻ dữ liệu với bên thứ 3
 - Retention policy: Xóa sau 1 năm inactive
+
+**Data Deletion Policy (Chi tiết):**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DATA DELETION POLICY                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Khi user yêu cầu XÓA TÀI KHOẢN:
+
+1. XÓA NGAY LẬP TỨC (Immediate):
+   ├── Conversations (tất cả tin nhắn)
+   ├── Moods (tất cả mood check-in)
+   ├── Audio files (nếu có lưu trữ)
+   ├── User profile
+   └── Refresh tokens
+
+2. XÓA SAU 30 NGÀY (Grace period):
+   └── Email (để ngăn đăng ký lại spam)
+       → Sau 30 ngày, email cũng bị xóa hoàn toàn
+
+3. GIỮ LẠI VÔ THỜI HẠN (Anonymized):
+   └── Crisis events (đã anonymized, không liên kết user)
+       → Lý do: Cải thiện hệ thống phát hiện khủng hoảng
+       → Chỉ giữ: level, trigger_content (anonymized), ai_response
+       → KHÔNG giữ: user_id, conversation_id
+
+QUAN TRỌNG:
+- Xóa là VĨNH VIỄN, KHÔNG THỂ PHỤC HỒI
+- Hiển thị cảnh báo rõ ràng trước khi xóa
+- Yêu cầu xác nhận password để xóa
+```
+
+**Auto-Cleanup Policy:**
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         AUTO-CLEANUP POLICY                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Tự động xóa khi INACTIVE (không đăng nhập):
+
+1. Sau 6 tháng inactive:
+   └── Gửi email cảnh báo "Tài khoản sắp bị xóa"
+
+2. Sau 9 tháng inactive:
+   └── Gửi email nhắc nhở lần 2
+
+3. Sau 12 tháng inactive:
+   └── Xóa tài khoản và toàn bộ dữ liệu (theo policy trên)
+
+NGOẠI LỆ:
+- User có thể chọn "Giữ tài khoản vĩnh viễn" trong Settings
+- Áp dụng cho user đã verify email
+```
 
 ### 8.3 Age Requirement
 - Tối thiểu: 12 tuổi
