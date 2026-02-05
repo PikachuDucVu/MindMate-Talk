@@ -1,0 +1,126 @@
+// Prisma Schema for MindMate-Talk
+// Database: SQLite (development) / PostgreSQL (production)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String?   @unique
+  passwordHash  String?   @map("password_hash")
+
+  // Profile
+  grade         String    @default("GRADE_10_11")
+  nickname      String?
+
+  // Preferences
+  preferVoice   Boolean   @default(true) @map("prefer_voice")
+  moodReminder  Boolean   @default(true) @map("mood_reminder")
+  reminderTime  String?   @default("20:00") @map("reminder_time")
+
+  // Timestamps
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  lastActiveAt  DateTime? @map("last_active_at")
+
+  // Relations
+  conversations Conversation[]
+  moods         Mood[]
+
+  @@map("users")
+}
+
+// ============================================
+// CONVERSATION
+// ============================================
+
+model Conversation {
+  id        String   @id @default(cuid())
+  userId    String?  @map("user_id")
+
+  // Metadata
+  title     String?
+  summary   String?
+  tags      String   @default("[]") // JSON array stored as string for SQLite
+
+  // Duration tracking
+  startedAt DateTime @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("conversations")
+}
+
+// ============================================
+// MESSAGE
+// ============================================
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String   @map("conversation_id")
+
+  // Content
+  role           String   // 'user' | 'assistant' | 'system'
+  content        String
+  contentType    String   @default("TEXT") @map("content_type") // 'TEXT' | 'VOICE'
+
+  // Audio (optional)
+  audioUrl       String?  @map("audio_url")
+  audioDuration  Int?     @map("audio_duration")
+
+  // AI metadata
+  tokensUsed     Int?     @map("tokens_used")
+  modelVersion   String?  @map("model_version")
+
+  // Timestamps
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+// ============================================
+// MOOD
+// ============================================
+
+model Mood {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+
+  // Mood data - store emotions as JSON string for SQLite
+  emotions   String   @default("[]") // JSON array: ["HAPPY", "CALM"]
+  note       String?
+
+  // When was this mood recorded
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  // Timestamps
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, recordedAt(sort: Desc)])
+  @@map("moods")
+}

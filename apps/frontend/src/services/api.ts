@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { ApiResponse, VoiceChatResponse } from '../types';
+import type { ApiResponse, VoiceChatResponse, Mood, MoodHistoryResponse, TodayMoodResponse, EmotionType } from '../types';
 
 const API_BASE_URL = '/api/v1';
 
@@ -72,4 +72,65 @@ export async function getAgentSignedUrl(): Promise<string> {
   }
 
   return response.data.data.signedUrl;
+}
+
+// ============================================
+// MOOD API
+// ============================================
+
+export async function createMood(
+  emotions: EmotionType[],
+  note?: string
+): Promise<Mood> {
+  const response = await api.post<ApiResponse<Mood>>('/mood', {
+    emotions,
+    note,
+  });
+
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error?.message || 'Không thể lưu mood');
+  }
+
+  return response.data.data;
+}
+
+export async function getMoodHistory(
+  startDate?: string,
+  endDate?: string,
+  limit?: number
+): Promise<MoodHistoryResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.append('startDate', startDate);
+  if (endDate) params.append('endDate', endDate);
+  if (limit) params.append('limit', limit.toString());
+
+  const response = await api.get<ApiResponse<MoodHistoryResponse>>(`/mood?${params.toString()}`);
+
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error?.message || 'Không thể tải lịch sử mood');
+  }
+
+  return response.data.data;
+}
+
+export async function getTodayMood(): Promise<TodayMoodResponse> {
+  const response = await api.get<ApiResponse<TodayMoodResponse>>('/mood/today');
+
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error?.message || 'Không thể kiểm tra mood hôm nay');
+  }
+
+  return response.data.data;
+}
+
+export async function getMoodStats(
+  period: 'week' | 'month' | 'year' = 'month'
+): Promise<any> {
+  const response = await api.get<ApiResponse<any>>(`/mood/stats?period=${period}`);
+
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error?.message || 'Không thể tải thống kê mood');
+  }
+
+  return response.data.data;
 }
