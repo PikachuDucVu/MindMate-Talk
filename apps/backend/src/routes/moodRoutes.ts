@@ -5,13 +5,17 @@ import {
   getTodayMood,
   getMoodStats,
 } from '../controllers/moodController.js';
+import { optionalAuthMiddleware } from '../middleware/authMiddleware.js';
 
 const router = Router();
+
+// Apply optional auth to all routes
+router.use(optionalAuthMiddleware);
 
 /**
  * @route   POST /api/v1/mood
  * @desc    Create a new mood entry
- * @access  Public (for now, will add auth later)
+ * @access  Authenticated (optional - uses userId if available)
  */
 router.post('/', createMood);
 
@@ -19,14 +23,14 @@ router.post('/', createMood);
  * @route   GET /api/v1/mood
  * @desc    Get mood history
  * @query   startDate, endDate, limit
- * @access  Public
+ * @access  Authenticated (optional)
  */
 router.get('/', getMoods);
 
 /**
  * @route   GET /api/v1/mood/today
  * @desc    Check if user has recorded mood today
- * @access  Public
+ * @access  Authenticated (optional)
  */
 router.get('/today', getTodayMood);
 
@@ -34,7 +38,7 @@ router.get('/today', getTodayMood);
  * @route   GET /api/v1/mood/stats
  * @desc    Get mood statistics
  * @query   period (week, month, year)
- * @access  Public
+ * @access  Authenticated (optional)
  */
 router.get('/stats', getMoodStats);
 

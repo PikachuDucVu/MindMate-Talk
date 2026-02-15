@@ -9,7 +9,7 @@ export class STTService {
   private baseUrl: string;
 
   constructor() {
-    this.apiKey = env.WHISPER_API_KEY;
+    this.apiKey = env.LLM_API_KEY;
     this.baseUrl = whisperConfig.baseUrl;
   }
 

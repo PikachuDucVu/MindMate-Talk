@@ -5,3 +5,4 @@ export { TypingIndicator } from './TypingIndicator';
 export { VoiceWave } from './VoiceWave';
 export { HotlineCard } from './HotlineCard';
 export { VoiceAgent } from './VoiceAgent';
+export { HistoryBottomSheet } from './HistoryBottomSheet';

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import chatRoutes from './chatRoutes.js';
 import moodRoutes from './moodRoutes.js';
+import authRoutes from './authRoutes.js';
+import crisisRoutes from './crisisRoutes.js';
 
 const router = Router();
 
@@ -17,7 +19,9 @@ router.get('/health', (_req, res) => {
 });
 
 // API v1 routes
+router.use('/auth', authRoutes);
 router.use('/chat', chatRoutes);
 router.use('/mood', moodRoutes);
+router.use('/crisis', crisisRoutes);
 
 export default router;

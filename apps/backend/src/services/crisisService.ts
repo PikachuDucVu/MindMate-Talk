@@ -1,4 +1,5 @@
 import type { CrisisLevel } from '../types/index.js';
+import { prisma } from '../config/database.js';
 
 // Crisis keywords categorized by severity
 const CRISIS_KEYWORDS = {
@@ -60,6 +61,52 @@ const CRISIS_PATTERNS = [
   /muốn.*(biến mất|bay đi|không tồn tại)/i,
   /mọi người.*(tốt hơn|vui hơn).*không có mình/i,
 ];
+
+// De-escalation techniques
+const DE_ESCALATION_PROMPTS = {
+  breathing: `Bạn có thể thử thở cùng mình được không?
+
+Hít vào chậm... 1... 2... 3... 4...
+Giữ... 1... 2... 3... 4...
+Thở ra... 1... 2... 3... 4... 5... 6...
+
+Bạn cảm thấy thế nào?`,
+
+  fiveSenses: `Mình muốn thử một điều nhỏ cùng bạn. Bạn có thể nhìn quanh và nói cho mình:
+- 5 thứ bạn THẤY
+- 4 thứ bạn có thể CHẠM vào
+- 3 thứ bạn NGHE
+- 2 thứ bạn NGỬI được
+- 1 thứ bạn có thể NẾM
+
+Bạn thử được không?`,
+
+  safePlace: `Bạn có thể nghĩ về một nơi mà bạn cảm thấy an toàn không?
+Có thể là một nơi thực, hoặc tưởng tượng cũng được.
+Bạn có thể mô tả nơi đó cho mình nghe không?`,
+};
+
+// Hotline information
+const HOTLINES = {
+  primary: {
+    name: 'Đường dây nóng Sức khỏe Tâm thần',
+    number: '1800-599-920',
+    hours: '24/7',
+    cost: 'Miễn phí',
+  },
+  childProtection: {
+    name: 'Tổng đài Bảo vệ Trẻ em',
+    number: '111',
+    hours: '24/7',
+    cost: 'Miễn phí',
+  },
+  emergency: {
+    name: 'Cấp cứu',
+    number: '115',
+    hours: '24/7',
+    cost: 'Miễn phí',
+  },
+};
 
 export interface CrisisAssessment {
   level: CrisisLevel;
@@ -151,8 +198,9 @@ QUAN TRỌNG: User đang trong tình trạng KHỦNG HOẢNG NGHIÊM TRỌNG.
 1. Thể hiện sự quan tâm sâu sắc
 2. Hỏi về sự an toàn: "Bạn có an toàn ngay bây giờ không?"
 3. Ở bên cạnh họ: "Mình ở đây với bạn"
-4. Đề nghị hotline: "Nếu bạn cần hỗ trợ ngay, gọi 1800-599-920 (24/7, miễn phí)"
+4. Đề nghị hotline: "Nếu bạn cần hỗ trợ ngay, gọi ${HOTLINES.primary.number} (${HOTLINES.primary.hours}, ${HOTLINES.primary.cost})"
 5. KHÔNG kết thúc cuộc trò chuyện đột ngột
+6. Có thể gợi ý kỹ thuật thở để hạ nhiệt nếu phù hợp
 `;
 
       case 'HIGH':
@@ -160,14 +208,16 @@ QUAN TRỌNG: User đang trong tình trạng KHỦNG HOẢNG NGHIÊM TRỌNG.
 QUAN TRỌNG: User đang có dấu hiệu khủng hoảng.
 1. Thể hiện sự lo lắng và quan tâm
 2. Xác nhận cảm xúc của họ
-3. Nhẹ nhàng đề cập đến hỗ trợ: "Nếu bạn cần nói chuyện với người có thể giúp đỡ chuyên sâu, có đường dây 1800-599-920"
+3. Nhẹ nhàng đề cập đến hỗ trợ: "Nếu bạn cần nói chuyện với người có thể giúp đỡ chuyên sâu, có đường dây ${HOTLINES.primary.number}"
 4. Tiếp tục lắng nghe và đồng hành
+5. Có thể gợi ý kỹ thuật grounding (5 giác quan) nếu user đang hoảng loạn
 `;
 
       case 'MEDIUM':
         return `
 User đang có dấu hiệu lo lắng hoặc buồn bã ở mức trung bình.
 Hãy thể hiện sự thấu hiểu sâu sắc và khám phá thêm về cảm xúc của họ.
+Hỏi về hệ thống hỗ trợ của họ (bạn bè, gia đình, người lớn đáng tin cậy).
 `;
 
       case 'LOW':
@@ -179,6 +229,72 @@ Hãy lắng nghe và thể hiện sự đồng cảm.
       default:
         return '';
     }
+  }
+
+  /**
+   * Get de-escalation technique prompt
+   */
+  getDeEscalationPrompt(technique: 'breathing' | 'fiveSenses' | 'safePlace'): string {
+    return DE_ESCALATION_PROMPTS[technique];
+  }
+
+  /**
+   * Log a crisis event to the database
+   */
+  async logCrisisEvent(params: {
+    userId?: string;
+    conversationId?: string;
+    level: CrisisLevel;
+    triggerContent: string;
+    aiResponse: string;
+    hotlineShown: boolean;
+  }): Promise<string | null> {
+    // Only log MEDIUM and above
+    if (params.level === 'NONE' || params.level === 'LOW') {
+      return null;
+    }
+
+    try {
+      const event = await prisma.crisisEvent.create({
+        data: {
+          userId: params.userId || null,
+          conversationId: params.conversationId || null,
+          level: params.level,
+          triggerContent: params.triggerContent,
+          aiResponse: params.aiResponse,
+          hotlineShown: params.hotlineShown,
+        },
+      });
+
+      return event.id;
+    } catch (error) {
+      // Don't let logging failures break the chat flow
+      console.error('Failed to log crisis event:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Record that user clicked a hotline
+   */
+  async recordHotlineClick(crisisEventId: string): Promise<boolean> {
+    try {
+      await prisma.crisisEvent.update({
+        where: { id: crisisEventId },
+        data: { hotlineClicked: true },
+      });
+      return true;
+    } catch (error) {
+      console.error('Failed to record hotline click:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get hotline information
+   */
+  getHotlines() {
+    return HOTLINES;
   }
 }
 

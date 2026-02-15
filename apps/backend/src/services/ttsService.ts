@@ -4,8 +4,8 @@ import { elevenLabsConfig } from '../config/services.js';
 import type { TTSRequest } from '../types/index.js';
 
 export class TTSService {
-  private apiKey: string;
-  private voiceId: string;
+  private apiKey: string | undefined;
+  private voiceId: string | undefined;
   private baseUrl: string;
 
   constructor() {

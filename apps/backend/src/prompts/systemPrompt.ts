@@ -60,16 +60,26 @@ export const CONVERSATION_STARTERS = [
   "Chào bạn! Bạn khỏe không? Có chuyện gì bạn muốn nói không?",
 ];
 
+// Grade display labels
+const GRADE_LABELS: Record<string, string> = {
+  'GRADE_6_7': 'lớp 6-7',
+  'GRADE_8_9': 'lớp 8-9',
+  'GRADE_10_11': 'lớp 10-11',
+  'GRADE_12': 'lớp 12',
+  'UNIVERSITY': 'đại học',
+};
+
 export const getContextualPrompt = (grade?: string, recentMoods?: string[]) => {
   let additions = '';
 
-  if (grade === 'GRADE_12') {
+  if (grade === 'GRADE_6_7') {
     additions += `
-User đang học lớp 12 - năm cuối THPT. Có thể họ đang đối mặt với:
-- Áp lực thi đại học
-- Định hướng tương lai
-- Kỳ vọng của gia đình
-Hãy nhạy cảm với những vấn đề này.
+User đang học lớp 6-7 - giai đoạn đầu trung học cơ sở. Có thể họ đang trải qua:
+- Chuyển từ tiểu học lên, thích nghi với môi trường mới
+- Bắt đầu có thay đổi về cơ thể và tâm lý
+- Các mối quan hệ bạn bè mới, có thể bị bắt nạt
+- Áp lực học tập tăng so với cấp 1
+Hãy dùng ngôn ngữ đơn giản, gần gũi. Kiên nhẫn lắng nghe.
 `;
   }
 
@@ -79,7 +89,42 @@ User đang học lớp 8-9 - giai đoạn dậy thì. Có thể họ đang trả
 - Thay đổi cơ thể và cảm xúc
 - Áp lực về thi vào lớp 10
 - Các mối quan hệ bạn bè phức tạp
+- Bắt đầu quan tâm đến ngoại hình, tình cảm
 Hãy kiên nhẫn và thấu hiểu.
+`;
+  }
+
+  if (grade === 'GRADE_10_11') {
+    additions += `
+User đang học lớp 10-11 - giai đoạn THPT. Có thể họ đang đối mặt với:
+- Áp lực chọn ban/tổ hợp môn phù hợp
+- Định hướng nghề nghiệp sớm
+- Mối quan hệ tình cảm tuổi teen
+- Cân bằng giữa học tập và hoạt động ngoại khóa
+Hãy lắng nghe và tôn trọng suy nghĩ của họ.
+`;
+  }
+
+  if (grade === 'GRADE_12') {
+    additions += `
+User đang học lớp 12 - năm cuối THPT. Có thể họ đang đối mặt với:
+- Áp lực thi đại học
+- Định hướng tương lai
+- Kỳ vọng của gia đình
+- Lo lắng về kết quả và tương lai
+Hãy nhạy cảm với những vấn đề này.
+`;
+  }
+
+  if (grade === 'UNIVERSITY') {
+    additions += `
+User đang là sinh viên đại học. Có thể họ đang trải qua:
+- Sống xa nhà, tự lập lần đầu
+- Áp lực học tập và điểm số ở bậc đại học
+- Quản lý tài chính, thời gian
+- Định hướng nghề nghiệp, thực tập
+- Các mối quan hệ xã hội mới
+Hãy nói chuyện như một người bạn đồng trang lứa.
 `;
   }
 
@@ -91,4 +136,135 @@ Hãy thể hiện sự hiện diện và quan tâm nhiều hơn.
   }
 
   return additions;
+};
+
+// Concern display labels
+const CONCERN_LABELS: Record<string, string> = {
+  'STUDY': 'học tập & thi cử',
+  'FAMILY': 'gia đình',
+  'FRIENDS': 'bạn bè',
+  'ROMANCE': 'tình cảm',
+  'SELF_ESTEEM': 'tự tin / ngoại hình',
+  'FUTURE': 'tương lai / hướng nghiệp',
+  'SLEEP': 'giấc ngủ',
+  'STRESS': 'stress / áp lực',
+  'BULLYING': 'bị bắt nạt',
+  'LONELINESS': 'cô đơn',
+};
+
+/**
+ * Build user profile context for system prompt
+ */
+export const buildUserProfileContext = (user: {
+  nickname?: string | null;
+  grade?: string;
+  concerns?: string;
+}): string => {
+  const parts: string[] = [];
+
+  if (user.nickname) {
+    parts.push(`Tên/biệt danh: ${user.nickname}`);
+  }
+  if (user.grade) {
+    parts.push(`Đang học: ${GRADE_LABELS[user.grade] || user.grade}`);
+  }
+
+  // Parse concerns from JSON string
+  let concerns: string[] = [];
+  if (user.concerns) {
+    try {
+      concerns = JSON.parse(user.concerns);
+    } catch {
+      // ignore
+    }
+  }
+
+  if (concerns.length > 0) {
+    const labels = concerns.map(c => CONCERN_LABELS[c] || c.toLowerCase()).join(', ');
+    parts.push(`Các vấn đề quan tâm: ${labels}`);
+  }
+
+  if (parts.length === 0) return '';
+
+  let context = `\n\n[THÔNG TIN VỀ USER]
+${parts.join('\n')}
+Hãy gọi user bằng tên/biệt danh nếu có. Hãy điều chỉnh cách nói phù hợp với lứa tuổi của user.`;
+
+  if (concerns.length > 0) {
+    context += `\nUser đã chia sẻ rằng họ quan tâm đến các vấn đề trên. Hãy nhạy cảm và chú ý khi các chủ đề này xuất hiện trong cuộc trò chuyện.`;
+  }
+
+  return context;
+};
+
+/**
+ * Build past conversation context for cross-session memory
+ */
+export const buildPastConversationsContext = (
+  summaries: Array<{
+    title: string | null;
+    summary: string | null;
+    lastMessages: string[];
+    createdAt: Date;
+  }>
+): string => {
+  if (summaries.length === 0) return '';
+
+  let context = `\n\n[CÁC CUỘC TRÒ CHUYỆN TRƯỚC ĐÂY]
+Dưới đây là tóm tắt các cuộc trò chuyện gần đây với user. Hãy sử dụng thông tin này để hiểu user tốt hơn, nhớ những gì đã nói, và tạo cảm giác liên tục trong mối quan hệ. KHÔNG nhắc lại y nguyên nội dung cũ, mà hãy tự nhiên thể hiện rằng bạn nhớ và quan tâm.\n`;
+
+  summaries.forEach((conv, i) => {
+    const date = conv.createdAt.toLocaleDateString('vi-VN');
+    context += `\n--- Cuộc trò chuyện ${i + 1} (${date}) ---`;
+    if (conv.title) {
+      context += `\nChủ đề: ${conv.title}`;
+    }
+    if (conv.summary) {
+      context += `\nTóm tắt: ${conv.summary}`;
+    }
+    if (conv.lastMessages.length > 0) {
+      context += `\nNội dung gần nhất:\n${conv.lastMessages.join('\n')}`;
+    }
+  });
+
+  context += `\n\nLưu ý: Dùng thông tin trên một cách TỰ NHIÊN. Ví dụ: "Lần trước bạn có kể về...", "Mình nhớ bạn đã chia sẻ...". Không liệt kê lại toàn bộ nội dung cũ.`;
+
+  return context;
+};
+
+/**
+ * Build mood history context (beyond just today)
+ */
+export const buildMoodHistoryContext = (
+  recentMoods: Array<{ emotions: string[]; note: string | null; recordedAt: Date }>
+): string => {
+  if (recentMoods.length === 0) return '';
+
+  const EMOTION_LABELS: Record<string, string> = {
+    HAPPY: 'vui vẻ', CALM: 'bình yên', NEUTRAL: 'bình thường',
+    TIRED: 'mệt mỏi', ANXIOUS: 'lo lắng', SAD: 'buồn',
+    CONFUSED: 'rối bời', LONELY: 'cô đơn', NUMB: 'trống rỗng',
+    ANGRY: 'tức giận', OVERWHELMED: 'quá tải',
+  };
+
+  let context = `\n\n[LỊCH SỬ CẢM XÚC GẦN ĐÂY CỦA USER]\n`;
+
+  recentMoods.forEach((mood) => {
+    const date = mood.recordedAt.toLocaleDateString('vi-VN');
+    const emotionLabels = mood.emotions.map(e => EMOTION_LABELS[e] || e.toLowerCase()).join(', ');
+    context += `- ${date}: ${emotionLabels}`;
+    if (mood.note) context += ` ("${mood.note}")`;
+    context += '\n';
+  });
+
+  // Detect patterns
+  const allEmotions = recentMoods.flatMap(m => m.emotions);
+  const negativeCount = allEmotions.filter(e => ['SAD', 'ANXIOUS', 'LONELY', 'NUMB', 'ANGRY', 'OVERWHELMED', 'TIRED'].includes(e)).length;
+  const totalCount = allEmotions.length;
+
+  if (negativeCount > totalCount * 0.6 && recentMoods.length >= 3) {
+    context += `\n⚠️ User có xu hướng cảm xúc tiêu cực liên tục trong thời gian gần đây. Hãy thể hiện sự quan tâm và hỏi thăm nhẹ nhàng.`;
+  }
+
+  return context;
 };

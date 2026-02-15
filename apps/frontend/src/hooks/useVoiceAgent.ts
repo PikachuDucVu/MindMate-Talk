@@ -15,6 +15,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
   const [error, setError] = useState<string | null>(null);
   const messageIdRef = useRef(0);
   const onMessageRef = useRef(options.onMessage);
+  const dynamicPromptRef = useRef<string | null>(null);
 
   // Keep ref updated
   onMessageRef.current = options.onMessage;
@@ -23,6 +24,11 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
     onConnect: () => {
       setStatus('connected');
       setError(null);
+      // Send dynamic context after connection is established
+      if (dynamicPromptRef.current) {
+        conversation.sendContextualUpdate(dynamicPromptRef.current);
+        dynamicPromptRef.current = null;
+      }
     },
     onDisconnect: () => {
       setStatus('disconnected');
@@ -47,7 +53,7 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       }
     },
     onError: (err) => {
-      setError(err.message || 'An error occurred');
+      setError(err || 'An error occurred');
       setStatus('error');
     },
   });
@@ -60,10 +66,13 @@ export function useVoiceAgent(options: UseVoiceAgentOptions = {}) {
       // Request microphone permission
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // Get signed URL from backend
-      const signedUrl = await getAgentSignedUrl();
+      // Get signed URL and dynamic prompt from backend
+      const { signedUrl, dynamicPrompt } = await getAgentSignedUrl();
 
-      // Start the conversation
+      // Store dynamic prompt to send after connection
+      dynamicPromptRef.current = dynamicPrompt;
+
+      // Start the conversation (no overrides - use sendContextualUpdate after connect)
       await conversation.startSession({ signedUrl });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to connect');

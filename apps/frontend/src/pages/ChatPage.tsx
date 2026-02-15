@@ -1,11 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
-import { MessageSquare, Phone } from 'lucide-react';
+import { MessageSquare, Phone, Menu, Plus, User } from 'lucide-react';
 import { clsx } from 'clsx';
-import { Header, Disclaimer } from '../components/layout';
-import { MessageList, ChatInput, HotlineCard, VoiceAgent } from '../components/chat';
+import { Disclaimer } from '../components/layout';
+import { MessageList, ChatInput, HotlineCard, VoiceAgent, HistoryBottomSheet } from '../components/chat';
 import { MoodButton, MoodCheckinModal } from '../components/mood';
+import { LinkAccountModal } from '../components/auth';
+import { SOSButton } from '../components/sos';
 import { useChatStore } from '../stores/chatStore';
 import { useMoodStore } from '../stores/moodStore';
+import { useAuthStore } from '../stores/authStore';
 import { sendVoiceMessage } from '../services/api';
 
 type ChatMode = 'text' | 'voice-agent';
@@ -19,6 +22,9 @@ export function ChatPage() {
     sendMessage,
     clearConversation,
     conversationId,
+    showHistorySheet,
+    setShowHistorySheet,
+    fetchHistory,
   } = useChatStore();
 
   const {
@@ -29,13 +35,17 @@ export function ChatPage() {
     fetchTodayMood,
   } = useMoodStore();
 
+  const { user } = useAuthStore();
+
   const [showHotline, setShowHotline] = useState(true);
   const [chatMode, setChatMode] = useState<ChatMode>('voice-agent');
+  const [showLinkModal, setShowLinkModal] = useState(false);
 
-  // Check if user has recorded mood today on mount
+  // Fetch history and mood on mount
   useEffect(() => {
     fetchTodayMood();
-  }, [fetchTodayMood]);
+    fetchHistory();
+  }, [fetchTodayMood, fetchHistory]);
 
   // Show mood modal prompt after first message if not recorded today
   useEffect(() => {
@@ -86,6 +96,9 @@ export function ChatPage() {
         const audio = new Audio(response.audioUrl);
         audio.play().catch(console.error);
       }
+
+      // Refresh history
+      fetchHistory();
     } catch (err) {
       useChatStore.setState({
         isLoading: false,
@@ -110,9 +123,51 @@ export function ChatPage() {
     setShowHotline(true);
   };
 
+  const handleOpenHistory = () => {
+    setShowHistorySheet(true);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-50">
-      <Header onNewChat={handleNewChat} />
+      {/* Custom Header with History Button */}
+      <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleOpenHistory}
+            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+            aria-label="Lịch sử chat"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <h1 className="text-lg font-semibold text-primary-600">MindMate</h1>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Account button */}
+          {user?.isGuest && (
+            <button
+              onClick={() => setShowLinkModal(true)}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              title="Lưu tài khoản"
+            >
+              <User className="w-4 h-4" />
+              <span className="hidden sm:inline">Lưu TK</span>
+            </button>
+          )}
+
+          {/* SOS Button - In header per docs */}
+          <SOSButton />
+
+          <button
+            onClick={handleNewChat}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Mới
+          </button>
+        </div>
+      </header>
+
       <Disclaimer />
 
       <main className="flex-1 flex flex-col max-w-3xl mx-auto w-full bg-white shadow-sm overflow-hidden">
@@ -179,10 +234,22 @@ export function ChatPage() {
         )}
       </main>
 
+      {/* History Bottom Sheet */}
+      <HistoryBottomSheet
+        isOpen={showHistorySheet}
+        onClose={() => setShowHistorySheet(false)}
+      />
+
       {/* Mood Check-in Modal */}
       <MoodCheckinModal
         isOpen={showMoodModal}
         onClose={closeMoodModal}
+      />
+
+      {/* Link Account Modal */}
+      <LinkAccountModal
+        isOpen={showLinkModal}
+        onClose={() => setShowLinkModal(false)}
       />
     </div>
   );

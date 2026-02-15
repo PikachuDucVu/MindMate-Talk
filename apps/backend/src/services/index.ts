@@ -3,3 +3,5 @@ export * from './ttsService.js';
 export * from './sttService.js';
 export * from './crisisService.js';
 export * from './voiceChatService.js';
+export * from './conversationService.js';
+export * from './authService.js';

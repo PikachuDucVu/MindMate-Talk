@@ -4,9 +4,11 @@ import {
   textChatHandler,
   voiceChatHandler,
   getConversationHandler,
+  getConversationHistoryHandler,
   deleteConversationHandler,
   getAgentSignedUrlHandler,
 } from '../controllers/chatController.js';
+import { optionalAuthMiddleware } from '../middleware/authMiddleware.js';
 
 const router = Router();
 
@@ -26,6 +28,9 @@ const upload = multer({
   },
 });
 
+// Apply optional auth to all routes
+router.use(optionalAuthMiddleware);
+
 // Text chat endpoint
 router.post('/text', textChatHandler);
 
@@ -35,7 +40,10 @@ router.post('/voice', upload.single('audio'), voiceChatHandler);
 // ElevenLabs agent signed URL
 router.get('/agent/signed-url', getAgentSignedUrlHandler);
 
-// Get conversation history
+// Get recent conversations history
+router.get('/history', getConversationHistoryHandler);
+
+// Get conversation by ID
 router.get('/:conversationId', getConversationHandler);
 
 // Delete conversation

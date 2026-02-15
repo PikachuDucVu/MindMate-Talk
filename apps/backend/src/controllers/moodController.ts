@@ -52,9 +52,8 @@ export async function createMood(
 
     const { emotions, note } = validation.data;
 
-    // For now, userId is optional (anonymous users)
-    // In future, get from auth middleware
-    const userId = (req as any).userId || undefined;
+    // Get userId from auth middleware
+    const userId = req.user?.userId;
 
     const mood = await moodService.createMood({
       userId,
@@ -100,7 +99,7 @@ export async function getMoods(
     }
 
     const { limit } = validation.data;
-    const userId = (req as any).userId || undefined;
+    const userId = req.user?.userId;
 
     // Default date range: last 30 days
     const endDate = validation.data.endDate
@@ -140,7 +139,7 @@ export async function getTodayMood(
   next: NextFunction
 ): Promise<void> {
   try {
-    const userId = (req as any).userId || undefined;
+    const userId = req.user?.userId;
     const mood = await moodService.getTodayMood(userId);
 
     res.json({
@@ -183,7 +182,7 @@ export async function getMoodStats(
     }
 
     const { period } = validation.data;
-    const userId = (req as any).userId || undefined;
+    const userId = req.user?.userId;
 
     // Convert period to days
     const periodDays = {

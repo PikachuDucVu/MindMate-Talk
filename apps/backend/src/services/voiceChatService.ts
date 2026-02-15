@@ -1,19 +1,61 @@
-import { v4 as uuidv4 } from 'uuid';
 import { llmService } from './llmService.js';
 import { ttsService } from './ttsService.js';
 import { sttService } from './sttService.js';
-import { crisisService, type CrisisAssessment } from './crisisService.js';
-import { MINDMATE_SYSTEM_PROMPT, getContextualPrompt } from '../prompts/systemPrompt.js';
+import { crisisService } from './crisisService.js';
+import { conversationService } from './conversationService.js';
+import moodService from './moodService.js';
+import { prisma } from '../config/database.js';
+import {
+  MINDMATE_SYSTEM_PROMPT,
+  getContextualPrompt,
+  buildUserProfileContext,
+  buildPastConversationsContext,
+  buildMoodHistoryContext,
+} from '../prompts/systemPrompt.js';
 import type {
   VoiceChatRequest,
   VoiceChatResponse,
-  Message,
   ConversationContext,
-  CrisisLevel,
+  Message,
 } from '../types/index.js';
 
-// In-memory conversation store (replace with Redis/DB in production)
-const conversationStore = new Map<string, ConversationContext>();
+// Emotion labels in Vietnamese
+const EMOTION_LABELS: Record<string, string> = {
+  HAPPY: 'vui vẻ',
+  CALM: 'bình yên',
+  NEUTRAL: 'bình thường',
+  TIRED: 'mệt mỏi',
+  ANXIOUS: 'lo lắng',
+  SAD: 'buồn',
+  CONFUSED: 'rối bời',
+  LONELY: 'cô đơn',
+  NUMB: 'trống rỗng',
+  ANGRY: 'tức giận',
+  OVERWHELMED: 'quá tải',
+};
+
+/**
+ * Build mood context for system prompt
+ */
+function buildMoodContext(emotions: string[], note?: string | null): string {
+  if (emotions.length === 0) return '';
+
+  const emotionLabels = emotions.map(e => EMOTION_LABELS[e] || e.toLowerCase()).join(', ');
+
+  let context = `\n\n[TRẠNG THÁI CẢM XÚC HÔM NAY CỦA USER]
+User đã chia sẻ cảm xúc hôm nay: ${emotionLabels}.`;
+
+  if (note) {
+    context += `\nGhi chú của user: "${note}"`;
+  }
+
+  context += `\nHãy thể hiện sự thấu hiểu về trạng thái cảm xúc này trong cuộc trò chuyện. Không cần hỏi lại "hôm nay bạn cảm thấy thế nào" vì user đã chia sẻ rồi.`;
+
+  return context;
+}
+
+// In-memory cache for active conversations (faster than DB for frequent access)
+const conversationCache = new Map<string, { messages: Message[] }>();
 
 export class VoiceChatService {
   /**
@@ -21,18 +63,22 @@ export class VoiceChatService {
    * Audio → STT → LLM → TTS → Audio
    */
   async processVoiceChat(request: VoiceChatRequest): Promise<VoiceChatResponse> {
-    const conversationId = request.conversationId || uuidv4();
+    let conversationId = request.conversationId;
+    let isNewConversation = false;
 
-    // Get or create conversation context
-    let context = conversationStore.get(conversationId);
-    if (!context) {
-      context = {
-        id: conversationId,
-        messages: [],
-        createdAt: new Date(),
-        lastMessageAt: new Date(),
-      };
-      conversationStore.set(conversationId, context);
+    // Create new conversation in DB if needed
+    if (!conversationId) {
+      const conversation = await conversationService.createConversation(request.userId);
+      conversationId = conversation.id;
+      isNewConversation = true;
+    }
+
+    // Get messages from cache or load from DB
+    let messages: Message[] = conversationCache.get(conversationId)?.messages || [];
+    if (messages.length === 0) {
+      const dbMessages = await conversationService.getMessages(conversationId, 20);
+      messages = dbMessages.map(m => ({ role: m.role as Message['role'], content: m.content }));
+      conversationCache.set(conversationId, { messages });
     }
 
     let userText: string;
@@ -53,33 +99,99 @@ export class VoiceChatService {
     // Step 2: Crisis Assessment
     const crisisAssessment = crisisService.assessMessage(userText);
 
-    // Step 3: Add user message to context
-    context.messages.push({
+    // Step 3: Save user message to DB and add to cache
+    await conversationService.addMessage(conversationId, {
       role: 'user',
       content: userText,
+      contentType: request.audioBuffer ? 'VOICE' : 'TEXT',
     });
-    context.lastMessageAt = new Date();
+    messages.push({ role: 'user', content: userText });
 
-    // Step 4: Build system prompt with crisis context
+    // Step 4: Build system prompt with full user context
     let systemPrompt = MINDMATE_SYSTEM_PROMPT;
-    systemPrompt += getContextualPrompt();
+
+    if (request.userId) {
+      // Fetch user profile, past conversations, and mood history in parallel
+      const [user, pastConversations, recentMoods, todayMood] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: request.userId },
+          select: { nickname: true, grade: true, concerns: true },
+        }),
+        conversationService.getRecentConversationSummaries(
+          request.userId,
+          conversationId,
+          5
+        ),
+        moodService.getMoodHistory(
+          request.userId,
+          new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // last 7 days
+          new Date(),
+          7
+        ),
+        moodService.getTodayMood(request.userId),
+      ]);
+
+      // Add user profile context (name, grade)
+      if (user) {
+        systemPrompt += buildUserProfileContext(user);
+        systemPrompt += getContextualPrompt(user.grade);
+      }
+
+      // Add past conversation summaries for cross-session memory
+      if (pastConversations.length > 0) {
+        systemPrompt += buildPastConversationsContext(pastConversations);
+      }
+
+      // Add mood history (last 7 days) for emotional trend awareness
+      if (recentMoods.length > 0) {
+        systemPrompt += buildMoodHistoryContext(recentMoods);
+      }
+
+      // Add today's mood (more specific/immediate context)
+      if (todayMood) {
+        systemPrompt += buildMoodContext(todayMood.emotions, todayMood.note);
+      }
+    } else {
+      systemPrompt += getContextualPrompt();
+    }
+
     systemPrompt += crisisService.getCrisisPromptAddition(crisisAssessment.level);
 
     // Step 5: Generate AI response
     const llmResponse = await llmService.generateResponse({
-      messages: context.messages,
+      messages,
       systemPrompt,
     });
 
-    // Step 6: Add AI response to context
-    context.messages.push({
+    // Step 6: Save AI response to DB and add to cache
+    await conversationService.addMessage(conversationId, {
       role: 'assistant',
       content: llmResponse.content,
+      tokensUsed: llmResponse.tokensUsed,
     });
+    messages.push({ role: 'assistant', content: llmResponse.content });
 
-    // Limit conversation history to last 20 messages
-    if (context.messages.length > 20) {
-      context.messages = context.messages.slice(-20);
+    // Limit cache to last 20 messages
+    if (messages.length > 20) {
+      messages = messages.slice(-20);
+      conversationCache.set(conversationId, { messages });
+    }
+
+    // Log crisis event (MEDIUM and above) - fire and forget
+    if (crisisAssessment.level !== 'NONE' && crisisAssessment.level !== 'LOW') {
+      crisisService.logCrisisEvent({
+        userId: request.userId,
+        conversationId,
+        level: crisisAssessment.level,
+        triggerContent: userText,
+        aiResponse: llmResponse.content,
+        hotlineShown: crisisAssessment.shouldShowHotline,
+      }).catch(console.error);
+    }
+
+    // Generate title for new conversations
+    if (isNewConversation) {
+      conversationService.generateTitle(conversationId).catch(console.error);
     }
 
     // Step 7: Text-to-Speech
@@ -101,18 +213,22 @@ export class VoiceChatService {
    * Process text-only chat (no audio)
    */
   async processTextChat(request: VoiceChatRequest): Promise<Omit<VoiceChatResponse, 'audioBuffer'>> {
-    const conversationId = request.conversationId || uuidv4();
+    let conversationId = request.conversationId;
+    let isNewConversation = false;
 
-    // Get or create conversation context
-    let context = conversationStore.get(conversationId);
-    if (!context) {
-      context = {
-        id: conversationId,
-        messages: [],
-        createdAt: new Date(),
-        lastMessageAt: new Date(),
-      };
-      conversationStore.set(conversationId, context);
+    // Create new conversation in DB if needed
+    if (!conversationId) {
+      const conversation = await conversationService.createConversation(request.userId);
+      conversationId = conversation.id;
+      isNewConversation = true;
+    }
+
+    // Get messages from cache or load from DB
+    let messages: Message[] = conversationCache.get(conversationId)?.messages || [];
+    if (messages.length === 0) {
+      const dbMessages = await conversationService.getMessages(conversationId, 20);
+      messages = dbMessages.map(m => ({ role: m.role as Message['role'], content: m.content }));
+      conversationCache.set(conversationId, { messages });
     }
 
     if (!request.text) {
@@ -122,33 +238,99 @@ export class VoiceChatService {
     // Crisis Assessment
     const crisisAssessment = crisisService.assessMessage(request.text);
 
-    // Add user message
-    context.messages.push({
+    // Save user message to DB and add to cache
+    await conversationService.addMessage(conversationId, {
       role: 'user',
       content: request.text,
+      contentType: 'TEXT',
     });
-    context.lastMessageAt = new Date();
+    messages.push({ role: 'user', content: request.text });
 
-    // Build system prompt
+    // Build system prompt with full user context
     let systemPrompt = MINDMATE_SYSTEM_PROMPT;
-    systemPrompt += getContextualPrompt();
+
+    if (request.userId) {
+      // Fetch user profile, past conversations, and mood history in parallel
+      const [user, pastConversations, recentMoods, todayMood] = await Promise.all([
+        prisma.user.findUnique({
+          where: { id: request.userId },
+          select: { nickname: true, grade: true, concerns: true },
+        }),
+        conversationService.getRecentConversationSummaries(
+          request.userId,
+          conversationId,
+          5
+        ),
+        moodService.getMoodHistory(
+          request.userId,
+          new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // last 7 days
+          new Date(),
+          7
+        ),
+        moodService.getTodayMood(request.userId),
+      ]);
+
+      // Add user profile context (name, grade)
+      if (user) {
+        systemPrompt += buildUserProfileContext(user);
+        systemPrompt += getContextualPrompt(user.grade);
+      }
+
+      // Add past conversation summaries for cross-session memory
+      if (pastConversations.length > 0) {
+        systemPrompt += buildPastConversationsContext(pastConversations);
+      }
+
+      // Add mood history (last 7 days) for emotional trend awareness
+      if (recentMoods.length > 0) {
+        systemPrompt += buildMoodHistoryContext(recentMoods);
+      }
+
+      // Add today's mood (more specific/immediate context)
+      if (todayMood) {
+        systemPrompt += buildMoodContext(todayMood.emotions, todayMood.note);
+      }
+    } else {
+      systemPrompt += getContextualPrompt();
+    }
+
     systemPrompt += crisisService.getCrisisPromptAddition(crisisAssessment.level);
 
     // Generate response
     const llmResponse = await llmService.generateResponse({
-      messages: context.messages,
+      messages,
       systemPrompt,
     });
 
-    // Add AI response
-    context.messages.push({
+    // Save AI response to DB and add to cache
+    await conversationService.addMessage(conversationId, {
       role: 'assistant',
       content: llmResponse.content,
+      tokensUsed: llmResponse.tokensUsed,
     });
+    messages.push({ role: 'assistant', content: llmResponse.content });
 
-    // Limit history
-    if (context.messages.length > 20) {
-      context.messages = context.messages.slice(-20);
+    // Limit cache
+    if (messages.length > 20) {
+      messages = messages.slice(-20);
+      conversationCache.set(conversationId, { messages });
+    }
+
+    // Log crisis event (MEDIUM and above) - fire and forget
+    if (crisisAssessment.level !== 'NONE' && crisisAssessment.level !== 'LOW') {
+      crisisService.logCrisisEvent({
+        userId: request.userId,
+        conversationId,
+        level: crisisAssessment.level,
+        triggerContent: request.text,
+        aiResponse: llmResponse.content,
+        hotlineShown: crisisAssessment.shouldShowHotline,
+      }).catch(console.error);
+    }
+
+    // Generate title for new conversations
+    if (isNewConversation) {
+      conversationService.generateTitle(conversationId).catch(console.error);
     }
 
     return {
@@ -160,24 +342,47 @@ export class VoiceChatService {
   }
 
   /**
-   * Get conversation history
+   * Get conversation history from DB
    */
-  getConversation(conversationId: string): ConversationContext | undefined {
-    return conversationStore.get(conversationId);
+  async getConversation(conversationId: string): Promise<ConversationContext | null> {
+    const conversation = await conversationService.getConversation(conversationId);
+    if (!conversation) return null;
+
+    return {
+      id: conversation.id,
+      messages: conversation.messages.map(m => ({
+        role: m.role as 'user' | 'assistant' | 'system',
+        content: m.content,
+      })),
+      createdAt: conversation.createdAt,
+      lastMessageAt: conversation.updatedAt,
+    };
   }
 
   /**
-   * Clear conversation
+   * Get recent conversations for history list
    */
-  clearConversation(conversationId: string): boolean {
-    return conversationStore.delete(conversationId);
+  async getRecentConversations(userId?: string, limit = 20) {
+    return conversationService.getRecentConversations(userId, limit);
   }
 
   /**
-   * Get all active conversations (for debugging)
+   * Clear conversation from cache and DB
    */
-  getAllConversations(): ConversationContext[] {
-    return Array.from(conversationStore.values());
+  async clearConversation(conversationId: string): Promise<boolean> {
+    conversationCache.delete(conversationId);
+    return conversationService.deleteConversation(conversationId);
+  }
+
+  /**
+   * Clear conversation cache only (for memory management)
+   */
+  clearCache(conversationId?: string): void {
+    if (conversationId) {
+      conversationCache.delete(conversationId);
+    } else {
+      conversationCache.clear();
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { ApiResponse, VoiceChatResponse, Mood, MoodHistoryResponse, TodayMoodResponse, EmotionType } from '../types';
+import { getAccessToken } from '../stores/authStore';
 
 const API_BASE_URL = '/api/v1';
 
@@ -8,6 +9,15 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+// Add auth token to all requests
+api.interceptors.request.use((config) => {
+  const token = getAccessToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
 });
 
 export async function sendTextMessage(
@@ -64,14 +74,14 @@ export async function checkHealth() {
   return response.data;
 }
 
-export async function getAgentSignedUrl(): Promise<string> {
-  const response = await api.get<ApiResponse<{ signedUrl: string }>>('/chat/agent/signed-url');
+export async function getAgentSignedUrl(): Promise<{ signedUrl: string; dynamicPrompt: string }> {
+  const response = await api.get<ApiResponse<{ signedUrl: string; dynamicPrompt: string }>>('/chat/agent/signed-url');
 
   if (!response.data.success || !response.data.data) {
     throw new Error(response.data.error?.message || 'Failed to get signed URL');
   }
 
-  return response.data.data.signedUrl;
+  return response.data.data;
 }
 
 // ============================================
@@ -130,6 +140,60 @@ export async function getMoodStats(
 
   if (!response.data.success || !response.data.data) {
     throw new Error(response.data.error?.message || 'Không thể tải thống kê mood');
+  }
+
+  return response.data.data;
+}
+
+// ============================================
+// CRISIS API
+// ============================================
+
+export async function reportHotlineClick(crisisEventId: string): Promise<void> {
+  await api.post('/crisis/hotline-clicked', { crisisEventId });
+}
+
+// ============================================
+// CHAT HISTORY API
+// ============================================
+
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  lastMessage: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface ConversationHistoryResponse {
+  conversations: ConversationSummary[];
+}
+
+export interface ConversationDetail {
+  id: string;
+  messages: Array<{
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+  }>;
+  createdAt: string;
+  lastMessageAt: string;
+}
+
+export async function getChatHistory(limit = 20): Promise<ConversationHistoryResponse> {
+  const response = await api.get<ApiResponse<ConversationHistoryResponse>>(`/chat/history?limit=${limit}`);
+
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error?.message || 'Không thể tải lịch sử chat');
+  }
+
+  return response.data.data;
+}
+
+export async function getConversationDetail(conversationId: string): Promise<ConversationDetail> {
+  const response = await api.get<ApiResponse<ConversationDetail>>(`/chat/${conversationId}`);
+
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error?.message || 'Không thể tải cuộc trò chuyện');
   }
 
   return response.data.data;

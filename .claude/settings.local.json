@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install)",
+      "Bash(npx prisma generate)",
+      "Bash(npx tsc:*)",
+      "Bash(npx -w packages/database prisma generate)",
+      "Bash(dir)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx prisma db push)",
+      "Bash(echo:*)",
+      "Bash(curl:*)",
+      "Bash(npx tsx:*)",
+      "Bash(powershell:*)",
+      "Bash(gh auth status:*)",
+      "Bash(git init)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: MindMate-Talk AI Voice Chat Companion\n\n- Turborepo monorepo with Node.js/Express backend and React/Vite frontend\n- Voice chat flow: Whisper STT → Custom LLM → ElevenLabs TTS\n- Crisis detection integration for mental health support\n- Vietnamese language support for student users\nEOF\n\\)\")",
+      "Bash(gh repo create:*)",
+      "Bash(gh repo edit:*)"
+    ]
+  }
+}
