@@ -23,5 +23,8 @@
   },
   "dependencies": {
     "@elevenlabs/react": "^0.13.1"
-  }
+  },
+  "trustedDependencies": [
+    "@parcel/watcher"
+  ]
 }

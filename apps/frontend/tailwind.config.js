@@ -1,8 +1,8 @@
 /** @type {import('tailwindcss').Config} */
-export default {
+module.exports = {
+  darkMode: ["selector", '[zaui-theme="dark"]'],
   content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
+    "./src/**/*.{js,jsx,ts,tsx}",
   ],
   theme: {
     extend: {
@@ -34,11 +34,11 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['Roboto Mono', 'monospace'],
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'bounce-slow': 'bounce 2s infinite',
-        // Onboarding animations
         'slide-in-right': 'slideInRight 0.45s cubic-bezier(0.16, 1, 0.3, 1)',
         'slide-in-left': 'slideInLeft 0.45s cubic-bezier(0.16, 1, 0.3, 1)',
         'fade-in-up': 'fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -129,4 +129,4 @@ export default {
     },
   },
   plugins: [],
-}
+};
